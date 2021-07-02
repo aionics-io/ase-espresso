@@ -3193,6 +3193,50 @@ class espresso(Calculator):
             parallel=False,
             log='charge.log')
 
+    def cube_charge_density(self, cube, spin='both'):
+        """
+        Writes the charge density from a DFT calculation
+        to an input file for xcrysden.
+        """
+        if spin == 'both' or spin == 0:
+            s = 0
+        elif spin == 'up' or spin == 1:
+            s = 1
+        elif spin == 'down' or spin == 2:
+            s = 2
+        else:
+            raise ValueError('unknown spin component')
+
+        self.run_ppx(
+            'charge.inp',
+            inputpp=[['plot_num', 0], ['spin_component', s]],
+            plot=[['fileout', self.topath(cube)]],
+            output_format=6,
+            parallel=False,
+            log='charge_cube.log')
+
+    def cube_ae_charge_density(self, cube, spin='both'):
+        """
+        Writes the charge density from a DFT calculation
+        to an input file for xcrysden.
+        """
+        if spin == 'both' or spin == 0:
+            s = 0
+        elif spin == 'up' or spin == 1:
+            s = 1
+        elif spin == 'down' or spin == 2:
+            s = 2
+        else:
+            raise ValueError('unknown spin component')
+
+        self.run_ppx(
+            'charge.inp',
+            inputpp=[['plot_num', 21], ['spin_component', s]],
+            plot=[['fileout', self.topath(cube)]],
+            output_format=6,
+            parallel=False,
+            log='charge_ae_cube.log')
+
     def extract_total_potential(self, spin='both'):
         """
         Obtains the total potential as a numpy array after a DFT calculation.
