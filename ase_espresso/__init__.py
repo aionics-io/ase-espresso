@@ -2234,11 +2234,9 @@ class espresso(Calculator):
             s.close()
             try:
                 self.cinp.close()
-            except:
-                pass
-            try:
                 self.cout.close()
-            except:
+            except IOError:
+                # espresso may have already shut down, so close may fail
                 pass
             self.started = False
 
