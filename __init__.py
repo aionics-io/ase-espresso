@@ -2209,8 +2209,12 @@ class espresso(Calculator):
                 s.write(a)
                 s.flush()
             s.close()
-            self.cinp.close()
-            self.cout.close()
+            try:
+                self.cinp.close()
+                self.cout.close()
+            except IOError:
+                # espresso may have already shut down, so close may fail
+                pass
             self.started = False
 
     def topath(self, filename):
