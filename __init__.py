@@ -2674,8 +2674,10 @@ class espresso(Calculator):
 
             call('cp {}/{} {}'.format(self.localtmp, inp, self.scratch),
                  shell=True)
-            cmd = 'cd {} ; {} {} -in {}'.format(
-                self.scratch, binary, self.serflags, inp + ll)
+            if not hasattr(site, 'singleProc'):
+                site.singleProc = ''
+            cmd = 'cd {} ; {} {} {} -in {}'.format(
+                self.scratch, site.singleProc, binary, self.serflags, inp + ll)
             if piperead:
                 p = Popen(cmd, shell=True, stdout=PIPE).stdout
             else:
@@ -3814,11 +3816,11 @@ class espresso(Calculator):
         self.run_ppx(
             'wf_pp.in',
             log='wf_pp.log',
-            inputpp=[('plot_num', 11), ('filplot', self.topath('pot.xsf'))],
+            inputpp=[('plot_num', 11), ('filplot', self.topath(pot_filename))],
             output_format=3,
             iflag=3,
             piperead=False,
-            parallel=False)
+            parallel=True)
 
         f = open(self.localtmp + '/avg.in', 'w')
         print('1', file=f)
@@ -3830,8 +3832,12 @@ class espresso(Calculator):
         print('', file=f)
         f.close()
         call('cp ' + self.localtmp + '/avg.in ' + self.scratch, shell=True)
-        call('cd ' + self.scratch + ' ; ' + 'average.x < avg.in >>' +
-             self.localtmp + '/avg.out', shell=True)
+        # average.x requires to be run with a single process.
+        # If used with mpi, need to define singleProc in espsite.py
+        if not hasattr(site, 'singleProc'):
+            site.singleProc = ''
+        call('cd {}; {} {}average.x < avg.in >> {}/avg.out'.format(self.scratch, site.singleProc,
+                                                                   self.exedir, self.localtmp), shell=True)
         call('cp ' + self.scratch + '/avg.dat ' + self.localtmp, shell=True)
 
         # Pick a good place to sample vacuum level
