@@ -8,17 +8,21 @@
 
 import os
 from subprocess import Popen, PIPE, call
+import multiprocessing
 import warnings
 import atexit
 import sys
+from io import BytesIO
+
 import numpy as np
 from ase import Atoms
 from ase.units import Rydberg, Bohr, Hartree
+from ase.calculators.calculator import kptdensity2monkhorstpack
+
 from .atomic_configs import hundmag
 from .worldstub import world
 from . import subdirs
 from . import utils
-from ase.calculators.calculator import kptdensity2monkhorstpack
 
 try:
     from ase.calculators.calculator import FileIOCalculator as Calculator
@@ -33,7 +37,6 @@ except ImportError:
         '*** You may use the espsite.py.example.* in the git checkout as templates.'
     )
     raise ImportError
-site = espsite.config()
 gitver = 'GITVERSION'
 
 # ase controlled pw.x's register themselves here, so they can be
@@ -51,6 +54,8 @@ class ConvergenceError(Exception):
 class KohnShamConvergenceError(ConvergenceError):
     pass
 
+pkgpath = os.path.abspath(os.path.dirname(__file__))
+rootpath = os.path.dirname(pkgpath)
 
 class espresso(Calculator):
     """ASE interface for Quantum Espresso"""
@@ -74,7 +79,6 @@ class espresso(Calculator):
             calculation='ase3',
             opt_algorithm=None,
             ion_dynamics='ase3',
-            electron_dynamics='sd',
             nstep=None,
             constr_tol=None,
             fmax=0.05,
@@ -134,8 +138,6 @@ class espresso(Calculator):
                 'diag': 'david'
             },
             startingpot=None,
-            ampre = None,
-            orthogonalization = None,
             startingwfc=None,
             ion_positions=None,
             parflags=None,
@@ -148,14 +150,12 @@ class espresso(Calculator):
             # automatically generated list of parameters
             # some coincide with ase-style names
             iprint=None,
-            isave=None,
             tstress=None,
             tprnfor=None,
             dt=None,
             lkpoint_dir=None,
             max_seconds=None,
             etot_conv_thr=None,
-            ekin_conv_thr=None,
             forc_conv_thr=None,
             tefield=None,
             dipfield=None,
@@ -167,12 +167,8 @@ class espresso(Calculator):
             nppstr=None,
             nbnd=None,
             ecutwfc=None,
-            restart_mode=None,
             ecutrho=None,
             ecutfock=None,
-            nr1b = None,
-            nr2b = None,
-            nr3b = None, 
             force_symmorphic=None,
             use_all_frac=None,
             one_atom_occupations=None,
@@ -216,13 +212,6 @@ class espresso(Calculator):
             diago_cg_maxiter=None,
             diago_david_ndim=None,
             diago_full_acc=None,
-            emass=None,
-            emass_cutoff=2.5,
-            electron_velocities = None,
-            ion_velocities = None,
-            ion_temperature = None,
-            fnosep = None,
-            electron_damping = None,
             efield=None,
             tqr=None,
             remove_rigid_rot=None,
@@ -252,209 +241,210 @@ class espresso(Calculator):
             ignore_bad_restart_file=False,
             label=None,
             command=None,
+            nproc=None,
             # ENVIRON PART (credit Stefan Ringe)
             environ_keys=None,  # Environ keys given as dictionary, if given use_environ=True
             environ_extra_keys=None
     ):
-        """
-    Construct an ase-espresso calculator.
-    Parameters (with defaults in parentheses):
-     atoms (None)
-        list of atoms object to be attached to calculator
-        atoms.set_calculator can be used instead
-     onlycreatepwinp (None)
-        if not None but 'filename', create input file 'filename' for pw.x
-        but do not run pw.x
-        calc.initialize(atoms) will trigger 'filename' to be written
-     pw (350.0)
-        plane-wave cut-off in eV
-     dw (10*pw)
-        charge-density cut-off in eV
-     fw (None)
-        plane-wave cutoff for evaluation of EXX in eV
-     nbands (-10)
-        number of bands, if negative: -n extra bands
-     kpts ( (1,1,1) )
-        k-point grid sub-divisions, k-point grid density,
-        explicit list of k-points, or simply 'gamma' for gamma-point only.
-     kptshift ( (0,0,0) )
-        shift of k-point grid
-     fft_grid ( None )
-        specify tuple of fft grid points (nr1,nr2,nr3) for q.e.
-        useful for series of calculations with changing cell size
-        (e.g. lattice constant optimization) uses q.e. default if not
-        specified. [RK]
-     mode (None)
-        Deprecated, See calculation.
-     calculation ( 'ase3' )
-        relaxation mode:
-        - 'ase3': dynamic communication between Quantum Espresso and python
-        - 'relax', 'scf', 'nscf': corresponding Quantum Espresso standard modes
-     opt_algorithm (None)
-        Deprecated, See ion_dynamics.
-     ion_dynamics ( 'ase3' )
-        - 'ase3': ase updates coordinates during relaxation
-        - 'relax' and other Quantum Espresso standard relaxation modes:
-                  Quantum Espresso own algorithms for structural optimization
-                  are used
-        Obtaining Quantum Espresso with the ase3 relaxation extensions is
-        highly recommended, since it allows for using ase's optimizers without
-        loosing efficiency:
-        svn co --username anonymous http://qeforge.qe-forge.org/svn/q-e/branches/espresso-dynpy-beef
-     fmax (0.05)
-        max force limit for Espresso-internal relaxation (eV/Angstrom)
-     constr_tol (None)
-        constraint tolerance for Espresso-internal relaxation
-     cell_dynamics (None)
-        algorithm (e.g. 'BFGS') to be used for Espresso-internal
-        unit-cell optimization
-     press (None)
-        target pressure for such an optimization
-     dpress (None)
-        convergence limit towards target pressure
-     cell_factor (None)
-        should be >>1 if unit-cell volume is expected to shrink a lot during
-        relaxation (would be more efficient to start with a better guess)
-     cell_dofree (None)
-        partially fix lattice vectors
-     nosym (False)
-     noinv (False)
-     nosym_evc (False)
-     no_t_rev (False)
-        turn off corresp. symmetries
-     xc ('PBE')
-        xc-functional to be used
-     beefensemble (False)
-        calculate basis energies for ensemble error estimates based on
-        the BEEF-vdW functional
-     printensemble (False)
-        let Espresso itself calculate 2000 ensemble energies
-     psppath (None)
-        Directory containing the pseudo-potentials or paw-setups to be used.
-        The ase-espresso interface expects all pot. files to be of the type
-        element.UPF (e.g. H.UPF).
-        If None, the directory pointed to be ESP_PSP_PATH is used.
-     spinpol (False)
-        If True, calculation is spin-polarized
-     noncollinear (False)
-        Non-collinear magnetism.
-     spinorbit (False)
-        If True, spin-orbit coupling is considered.
-        Make sure to provide j-dependent pseudo-potentials in psppath
-        for those elements where spin-orbit coupling is important
-     outdir (None)
-        directory where Espresso's output is collected,
-        default: qe<random>
-     txt (None)
-        If not None, direct Espresso's output to a different file than
-        outdir/log
-     calcstress (False)
-        If True, calculate stress
-     occupations ('smearing')
-        Controls how Kohn-Sham states are occupied.
-        Possible values: 'smearing', 'fixed' (molecule or insulator),
-        or 'tetrahedra'.
-     smearing ('fd')
-        method for Fermi surface smearing
-        - 'fd','Fermi-Dirac': Fermi-Dirac
-        - 'mv','Marzari-Vanderbilt': Marzari-Vanderbilt cold smearing
-        - 'gauss','gaussian': Gaussian smearing
-        - 'mp','Methfessel-Paxton': Methfessel-Paxton
-        For ase 3.7+ compatibility, smearing can also be a tuple where
-        the first parameter is the method and the 2nd parameter
-        is the smearing width which overrides sigma below
-     sigma (0.1)
-        smearing width in eV
-     tot_charge (None)
-        charge the unit cell,
-        +1 means 1 e missing, -1 means 1 extra e
-     charge (None)
-        overrides tot_charge (ase 3.7+ compatibility)
-     tot_magnetization (-1)
-        Fix total magnetization,
-        -1 means unspecified/free,
-        'hund' means Hund's rule for each atom
-     fix_magmom (False)
-        If True, fix total magnetization to current value.
-     isolated (None)
-        invoke an 'assume_isolated' method for screening long-range interactions
-        across 3D supercells, particularly electrostatics.
-        Very useful for charged molecules and charged surfaces,
-        but also improves convergence wrt. vacuum space for neutral molecules.
-        - 'makov-payne', 'mp': only cubic systems.
-        - 'dcc': don't use.
-        - 'martyna-tuckerman', 'mt': method of choice for molecules, works for any supercell geometry.
-        - 'esm': Effective Screening Medium Method for surfaces and interfaces.
-     U (None)
-        specify Hubbard U values (in eV)
-        U can be list: specify U for each atom
-        U can be a dictionary ( e.g. U={'Fe':3.5} )
-        U values are assigned to angular momentum channels
-        according to Espresso's hard-coded defaults
-        (i.e. l=2 for transition metals, l=1 for oxygen, etc.)
-     J (None)
-        specify exchange J values (in eV)
-        can be list or dictionary (see U parameter above)
-     U_alpha
-        U_alpha (in eV)
-        can be list or dictionary (see U parameter above)
-     U_projection_type ('atomic')
-        type of projectors for calculating density matrices in DFT+U schemes
-     nqx1, nqx2, nqx3 (all None)
-        3D mesh for q=k1-k2 sampling of Fock operator. Can be smaller
-        than number of k-points.
-     exx_fraction (None)
-        Default depends on hybrid functional chosen.
-     screening_parameter (0.106)
-        Screening parameter for HSE-like functionals.
-     exxdiv_treatment (gygi-baldereschi)
-        Method to treat Coulomb potential divergence for small q.
-     ecutvcut (0)
-        Cut-off for above.
-     dipole ( {'status':False} )
-        If 'status':True, turn on dipole correction; then by default, the
-        dipole correction is applied along the z-direction, and the dipole is
-        put in the center of the vacuum region (taking periodic boundary
-        conditions into account).
-        This can be overridden with:
-        - 'edir':1, 2, or 3 for x-, y-, or z-direction
-        - 'emaxpos':float percentage wrt. unit cell where dip. correction
-          potential will be max.
-        - 'eopreg':float percentage wrt. unit cell where potential decreases
-        - 'eamp':0 (by default) if non-zero overcompensate dipole: i.e. apply
-          a field
-     output ( {'disk_io':'default',  # how often espresso writes wavefunctions to disk
-               'avoidio':False,  # will overwrite disk_io parameter if True
-               'removewf':True,
-               'removesave':False,
-               'wf_collect':False} )
-        control how much io is used by espresso;
-        'removewf':True means wave functions are deleted in scratch area before
-        job is done and data is copied back to submission directory
-        'removesave':True means whole .save directory is deleted in scratch area
-     convergence ( {'energy':1e-6,
-                    'mixing':0.7,
-                    'maxsteps':100,
-                    'diag':'david'} )
-        Electronic convergence criteria and diag. and mixing algorithms.
-        Additionally, a preconditioner for the mixing algoritms can be
-        specified, e.g. 'mixing_mode':'local-TF' or 'mixing_mode':'TF'.
-     startingpot (None)
-        By default: 'atomic' (use superposition of atomic orbitals for
-        initial guess)
-        'file': construct potential from charge-density.dat
-        Can be used with load_chg and save_chg methods.
-     startingwfc (None)
-        By default: 'atomic'.
-        Other options: 'atomic+random' or 'random'.
-        'file': reload wave functions from other calculations.
-        See load_wf and save_wf methods.
-     parflags (None)
-        Parallelization flags for Quantum Espresso.
-        E.g. parflags='-npool 2' will distribute k-points (and spin if
-        spin-polarized) over two nodes.
-     verbose ('low')
-        Can be 'high' or 'low'
+        """Construct an ase-espresso calculator.
+
+        Parameters (with defaults in parentheses):
+        atoms (None)
+           list of atoms object to be attached to calculator
+           atoms.set_calculator can be used instead
+        onlycreatepwinp (None)
+           if not None but 'filename', create input file 'filename' for pw.x
+           but do not run pw.x
+           calc.initialize(atoms) will trigger 'filename' to be written
+        pw (350.0)
+           plane-wave cut-off in eV
+        dw (10*pw)
+           charge-density cut-off in eV
+        fw (None)
+           plane-wave cutoff for evaluation of EXX in eV
+        nbands (-10)
+           number of bands, if negative: -n extra bands
+        kpts ( (1,1,1) )
+           k-point grid sub-divisions, k-point grid density,
+           explicit list of k-points, or simply 'gamma' for gamma-point only.
+        kptshift ( (0,0,0) )
+           shift of k-point grid
+        fft_grid ( None )
+           specify tuple of fft grid points (nr1,nr2,nr3) for q.e.
+           useful for series of calculations with changing cell size
+           (e.g. lattice constant optimization) uses q.e. default if not
+           specified. [RK]
+        mode (None)
+           Deprecated, See calculation.
+        calculation ( 'ase3' )
+           relaxation mode:
+           - 'ase3': dynamic communication between Quantum Espresso and python
+           - 'relax', 'scf', 'nscf': corresponding Quantum Espresso standard modes
+        opt_algorithm (None)
+           Deprecated, See ion_dynamics.
+        ion_dynamics ( 'ase3' )
+           - 'ase3': ase updates coordinates during relaxation
+           - 'relax' and other Quantum Espresso standard relaxation modes:
+                     Quantum Espresso own algorithms for structural optimization
+                     are used
+           Obtaining Quantum Espresso with the ase3 relaxation extensions is
+           highly recommended, since it allows for using ase's optimizers without
+           loosing efficiency:
+           svn co --username anonymous http://qeforge.qe-forge.org/svn/q-e/branches/espresso-dynpy-beef
+        fmax (0.05)
+           max force limit for Espresso-internal relaxation (eV/Angstrom)
+        constr_tol (None)
+           constraint tolerance for Espresso-internal relaxation
+        cell_dynamics (None)
+           algorithm (e.g. 'BFGS') to be used for Espresso-internal
+           unit-cell optimization
+        press (None)
+           target pressure for such an optimization
+        dpress (None)
+           convergence limit towards target pressure
+        cell_factor (None)
+           should be >>1 if unit-cell volume is expected to shrink a lot during
+           relaxation (would be more efficient to start with a better guess)
+        cell_dofree (None)
+           partially fix lattice vectors
+        nosym (False)
+        noinv (False)
+        nosym_evc (False)
+        no_t_rev (False)
+           turn off corresp. symmetries
+        xc ('PBE')
+           xc-functional to be used
+        beefensemble (False)
+           calculate basis energies for ensemble error estimates based on
+           the BEEF-vdW functional
+        printensemble (False)
+           let Espresso itself calculate 2000 ensemble energies
+        psppath (None)
+           Directory containing the pseudo-potentials or paw-setups to be used.
+           The ase-espresso interface expects all pot. files to be of the type
+           element.UPF (e.g. H.UPF).
+           If None, the directory pointed to be ESP_PSP_PATH is used.
+        spinpol (False)
+           If True, calculation is spin-polarized
+        noncollinear (False)
+           Non-collinear magnetism.
+        spinorbit (False)
+           If True, spin-orbit coupling is considered.
+           Make sure to provide j-dependent pseudo-potentials in psppath
+           for those elements where spin-orbit coupling is important
+        outdir (None)
+           directory where Espresso's output is collected,
+           default: qe<random>
+        txt (None)
+           If not None, direct Espresso's output to a different file than
+           outdir/log
+        calcstress (False)
+           If True, calculate stress
+        occupations ('smearing')
+           Controls how Kohn-Sham states are occupied.
+           Possible values: 'smearing', 'fixed' (molecule or insulator),
+           or 'tetrahedra'.
+        smearing ('fd')
+           method for Fermi surface smearing
+           - 'fd','Fermi-Dirac': Fermi-Dirac
+           - 'mv','Marzari-Vanderbilt': Marzari-Vanderbilt cold smearing
+           - 'gauss','gaussian': Gaussian smearing
+           - 'mp','Methfessel-Paxton': Methfessel-Paxton
+           For ase 3.7+ compatibility, smearing can also be a tuple where
+           the first parameter is the method and the 2nd parameter
+           is the smearing width which overrides sigma below
+        sigma (0.1)
+           smearing width in eV
+        tot_charge (None)
+           charge the unit cell,
+           +1 means 1 e missing, -1 means 1 extra e
+        charge (None)
+           overrides tot_charge (ase 3.7+ compatibility)
+        tot_magnetization (-1)
+           Fix total magnetization,
+           -1 means unspecified/free,
+           'hund' means Hund's rule for each atom
+        fix_magmom (False)
+           If True, fix total magnetization to current value.
+        isolated (None)
+           invoke an 'assume_isolated' method for screening long-range interactions
+           across 3D supercells, particularly electrostatics.
+           Very useful for charged molecules and charged surfaces,
+           but also improves convergence wrt. vacuum space for neutral molecules.
+           - 'makov-payne', 'mp': only cubic systems.
+           - 'dcc': don't use.
+           - 'martyna-tuckerman', 'mt': method of choice for molecules, works for any supercell geometry.
+           - 'esm': Effective Screening Medium Method for surfaces and interfaces.
+        U (None)
+           specify Hubbard U values (in eV)
+           U can be list: specify U for each atom
+           U can be a dictionary ( e.g. U={'Fe':3.5} )
+           U values are assigned to angular momentum channels
+           according to Espresso's hard-coded defaults
+           (i.e. l=2 for transition metals, l=1 for oxygen, etc.)
+        J (None)
+           specify exchange J values (in eV)
+           can be list or dictionary (see U parameter above)
+        U_alpha
+           U_alpha (in eV)
+           can be list or dictionary (see U parameter above)
+        U_projection_type ('atomic')
+           type of projectors for calculating density matrices in DFT+U schemes
+        nqx1, nqx2, nqx3 (all None)
+           3D mesh for q=k1-k2 sampling of Fock operator. Can be smaller
+           than number of k-points.
+        exx_fraction (None)
+           Default depends on hybrid functional chosen.
+        screening_parameter (0.106)
+           Screening parameter for HSE-like functionals.
+        exxdiv_treatment (gygi-baldereschi)
+           Method to treat Coulomb potential divergence for small q.
+        ecutvcut (0)
+           Cut-off for above.
+        dipole ( {'status':False} )
+           If 'status':True, turn on dipole correction; then by default, the
+           dipole correction is applied along the z-direction, and the dipole is
+           put in the center of the vacuum region (taking periodic boundary
+           conditions into account).
+           This can be overridden with:
+           - 'edir':1, 2, or 3 for x-, y-, or z-direction
+           - 'emaxpos':float percentage wrt. unit cell where dip. correction
+             potential will be max.
+           - 'eopreg':float percentage wrt. unit cell where potential decreases
+           - 'eamp':0 (by default) if non-zero overcompensate dipole: i.e. apply
+             a field
+        output ( {'disk_io':'default',  # how often espresso writes wavefunctions to disk
+                  'avoidio':False,  # will overwrite disk_io parameter if True
+                  'removewf':True,
+                  'removesave':False,
+                  'wf_collect':False} )
+           control how much io is used by espresso;
+           'removewf':True means wave functions are deleted in scratch area before
+           job is done and data is copied back to submission directory
+           'removesave':True means whole .save directory is deleted in scratch area
+        convergence ( {'energy':1e-6,
+                       'mixing':0.7,
+                       'maxsteps':100,
+                       'diag':'david'} )
+           Electronic convergence criteria and diag. and mixing algorithms.
+           Additionally, a preconditioner for the mixing algoritms can be
+           specified, e.g. 'mixing_mode':'local-TF' or 'mixing_mode':'TF'.
+        startingpot (None)
+           By default: 'atomic' (use superposition of atomic orbitals for
+           initial guess)
+           'file': construct potential from charge-density.dat
+           Can be used with load_chg and save_chg methods.
+        startingwfc (None)
+           By default: 'atomic'.
+           Other options: 'atomic+random' or 'random'.
+           'file': reload wave functions from other calculations.
+           See load_wf and save_wf methods.
+        parflags (None)
+           Parallelization flags for Quantum Espresso.
+           E.g. parflags='-npool 2' will distribute k-points (and spin if
+           spin-polarized) over two nodes.
+        verbose ('low')
+           Can be 'high' or 'low'
         """
         self.exedir = exedir
         self.outdir = outdir
@@ -483,7 +473,6 @@ class espresso(Calculator):
                 "opt_algorithm is deprecated, use ion_dynamics instead",
                 DeprecationWarning)
         self.ion_dynamics = ion_dynamics
-        self.electron_dynamics = electron_dynamics
         self.nstep = nstep
         self.constr_tol = constr_tol
         self.fmax = fmax
@@ -519,7 +508,10 @@ class espresso(Calculator):
         self.occupations = occupations
         self.outdir = outdir
         self.calcstress = calcstress
-        self.psppath = psppath
+        if psppath:
+            self.psppath = psppath
+        else:
+            self.psppath = os.path.join(rootpath,'pp',self.xc)
         self.dipole = dipole
         self.field = field
         self.output = output
@@ -557,10 +549,7 @@ class espresso(Calculator):
             self.parflags += parflags
         self.single_calculator = single_calculator
         self.txt = txt
-
-        self.mypath = os.path.abspath(os.path.dirname(__file__))
-        self.writeversion = True
-
+        self.writeversion = False
         self.atoms = None
         self.sigma_small = 1e-13
         self.started = False
@@ -569,16 +558,13 @@ class espresso(Calculator):
 
         # automatically generated list
         self.iprint = iprint
-        self.isave = isave
         self.tstress = tstress
         self.tprnfor = tprnfor
         self.dt = dt
         self.lkpoint_dir = lkpoint_dir
         self.max_seconds = max_seconds
         self.etot_conv_thr = etot_conv_thr
-        self.ekin_conv_thr = ekin_conv_thr
         self.forc_conv_thr = forc_conv_thr
-        self.ion_temperature = ion_temperature
         self.tefield = tefield
         self.dipfield = dipfield
         self.lelfield = lelfield
@@ -590,10 +576,6 @@ class espresso(Calculator):
         self.nbnd = nbnd
         self.ecutwfc = ecutwfc
         self.ecutrho = ecutrho
-        self.nr1b = nr1b
-        self.nr2b = nr2b
-        self.nr3b = nr3b
-        self.restart_mode = restart_mode
         self.ecutfock = ecutfock
         self.force_symmorphic = force_symmorphic
         self.use_all_frac = use_all_frac
@@ -638,15 +620,6 @@ class espresso(Calculator):
         self.diago_cg_maxiter = diago_cg_maxiter
         self.diago_david_ndim = diago_david_ndim
         self.diago_full_acc = diago_full_acc
-        self.emass = emass
-        self.emass_cutoff = emass_cutoff
-        self.electron_velocities = electron_velocities
-        self.startingwfc = startingwfc
-        self.ampre = ampre
-        self.orthogonalization = orthogonalization
-        self.ion_velocities = ion_velocities
-        self.fnosep = fnosep
-        self.electron_damping = electron_damping
         self.efield = efield
         self.tqr = tqr
         self.remove_rigid_rot = remove_rigid_rot
@@ -672,7 +645,12 @@ class espresso(Calculator):
         self.press_conv_thr = press_conv_thr
         self.results = results
         self.name = name
-<<<<<<< Updated upstream:__init__.py
+
+        # set up the site object
+        total_cpus = multiprocessing.cpu_count()
+        if not nproc or nproc > total_cpus:
+            nproc = total_cpus
+        self.site = espsite.Config(nproc)
 
         # give original espresso style input names
         # preference over ase / dacapo - style names
@@ -682,14 +660,6 @@ class espresso(Calculator):
             self.dw = ecutwfc
         if nbnd is not None:
             self.nbands = nbnd
-=======
-        
-        # set up the site object
-        total_cpus = multiprocessing.cpu_count()
-        if not nproc or nproc > total_cpus:
-            nproc = total_cpus
-        self.site = espsite.Config()
->>>>>>> Stashed changes:ase_espresso/__init__.py
 
         # Variables that cannot be set by inputs
         self.nvalence = None
@@ -706,7 +676,7 @@ class espresso(Calculator):
             self.proclist = False
         else:
             self.proclist = True
-            procs = site.procs + []
+            procs = self.site.procs + []
             procs.sort()
             nprocs = len(procs)
             self.myncpus = nprocs / numcalcs
@@ -720,7 +690,7 @@ class espresso(Calculator):
         if atoms is not None:
             atoms.set_calculator(self)
 
-        if hasattr(site, 'mpi_not_setup') and self.onlycreatepwinp is None:
+        if hasattr(self.site, 'mpi_not_setup') and self.onlycreatepwinp is None:
             print(
                 '*** Without cluster-adjusted espsite.py, ase-espresso can only be used\n'
                 '*** to create input files for pw.x via the option onlycreatepwinp.\n'
@@ -737,7 +707,7 @@ class espresso(Calculator):
         self.create_outdir()  # Create the tmp output folder
 
         # sdir is the directory the script is run or submitted from
-        self.sdir = subdirs.getsubmitorcurrentdir(site)
+        self.sdir = subdirs.getsubmitorcurrentdir(self.site)
 
         if self.dw is None:
             self.dw = 10. * self.pw
@@ -777,14 +747,14 @@ class espresso(Calculator):
 
     def create_outdir(self):
         if self.onlycreatepwinp is None:
-            self.localtmp = subdirs.mklocaltmp(self.outdir, site)
+            self.localtmp = subdirs.mklocaltmp(self.outdir, self.site)
             if not self.txt:
                 self.log = self.localtmp + '/log'
             elif self.txt[0] != '/':
                 self.log = self.sdir+'/'+self.txt
             else:
                 self.log = self.txt
-            self.scratch = subdirs.mkscratch(self.localtmp, site)
+            self.scratch = subdirs.mkscratch(self.localtmp, self.site)
             if self.output is not None:
                 if 'removewf' in self.output:
                     removewf = self.output['removewf']
@@ -798,7 +768,7 @@ class espresso(Calculator):
                 removewf = True
                 removesave = False
             atexit.register(subdirs.cleanup, self.localtmp, self.scratch,
-                            removewf, removesave, self, site)
+                            removewf, removesave, self, self.site)
             self.cancalc = True
         else:
             self.pwinp = self.onlycreatepwinp
@@ -1053,10 +1023,6 @@ class espresso(Calculator):
                 print(
                     '&CONTROL\n  calculation=\'scf\',\n  prefix=\'calc\',',
                     file=f)
-            elif self.calculation == 'cp':
-                print(
-                    '&CONTROL\n  calculation=\'cp\',\n  prefix=\'calc\',',
-                    file=f)
             else:
                 print(
                     '&CONTROL\n  calculation=\'' + self.calculation +
@@ -1111,15 +1077,13 @@ class espresso(Calculator):
                 file=f)
 
         # turn on fifo communication if espsite.py is set up that way
-        if hasattr(site, 'fifo'):
-            if site.fifo:
+        if hasattr(self.site, 'fifo'):
+            if self.site.fifo:
                 print('  ase_fifo=.true.,', file=f)
 
         # automatically generated parameters
         if self.iprint is not None:
             print('  iprint=' + str(self.iprint) + ',', file=f)
-        if self.isave is not None:
-            print('  isave=' + str(self.isave) + ',', file=f)
         if self.tstress is not None:
             print('  tstress=' + utils.bool2str(self.tstress) + ',', file=f)
         if self.tprnfor is not None:
@@ -1135,10 +1099,6 @@ class espresso(Calculator):
                 '  max_seconds=' + utils.num2str(self.max_seconds) + ',',
                 file=f)
         if self.etot_conv_thr is not None:
-            print(
-                '  etot_conv_thr=' + utils.num2str(self.etot_conv_thr) + ',',
-                file=f)
-        if self.ekin_conv_thr is not None:
             print(
                 '  etot_conv_thr=' + utils.num2str(self.etot_conv_thr) + ',',
                 file=f)
@@ -1164,8 +1124,7 @@ class espresso(Calculator):
             print('  nppstr=' + str(self.nppstr) + ',', file=f)
         if self.lfcpopt is not None:
             print('  lfcpopt=' + utils.bool2str(self.lfcpopt) + ',', file=f)
-        if self.restart_mode is not None:
-            print('  restart_mode=\'' + str(self.restart_mode) + '\',', file=f)
+
         ### &SYSTEM ###
         print('/\n&SYSTEM\n  ibrav=0,', file=f)
         print('  nat=' + str(self.natoms) + ',', file=f)
@@ -1202,12 +1161,6 @@ class espresso(Calculator):
         if self.fw is not None:
             print(
                 '  ecutfock=' + utils.num2str(self.fw / Rydberg) + ',', file=f)
-        if self.nr1b != None:
-            print('  nr1b=' + str(self.nr1b) + ',', file=f)
-        if self.nr2b != None:
-            print('  nr2b=' + str(self.nr2b) + ',', file=f)
-        if self.nr3b != None:
-            print('  nr3b=' + str(self.nr3b) + ',', file=f)
         # temporarily (and optionally) change number of bands for nscf calc.
         if overridenbands is not None:
             if self.nbands is None:
@@ -1234,8 +1187,7 @@ class espresso(Calculator):
             print('  occupations=\'tetrahedra\',', file=f)
         else:
             if abs(self.sigma) > 1e-13:
-                if self.occupations != None:
-                    print('  occupations=\'' + self.occupations + '\',', file=f)
+                print('  occupations=\'' + self.occupations + '\',', file=f)
                 print('  smearing=\'' + self.smearing + '\',', file=f)
                 print(
                     '  degauss=' + utils.num2str(self.sigma / Rydberg) + ',',
@@ -1513,12 +1465,12 @@ class espresso(Calculator):
         except BaseException:
             pass
 
-        if self.calculation != 'hund':
-            print('  conv_thr=' + utils.num2str(self.conv_thr) + ',', file=f)
-        else:
-            print(
-                '  conv_thr=' + utils.num2str(self.conv_thr * 500.) + ',',
-                file=f)
+        #if self.calculation != 'hund':
+        #    print('  conv_thr=' + utils.num2str(self.conv_thr) + ',', file=f)
+        #else:
+        #    print(
+        #        '  conv_thr=' + utils.num2str(self.conv_thr * 500.) + ',',
+        #        file=f)
         for x in list(self.convergence.keys()):
             if x == 'mixing':
                 print(
@@ -1595,27 +1547,11 @@ class espresso(Calculator):
                 '  diago_full_acc=' + utils.bool2str(self.diago_full_acc) +
                 ',',
                 file=f)
-
-        if self.emass is not None:
-            print('  emass=' + utils.num2str(self.emass) + ',', file=f)
-        if self.emass_cutoff is not None:
-            print('  emass_cutoff=' + utils.num2str(self.emass_cutoff) + ',', file=f)
         if self.efield is not None:
             print('  efield=' + utils.num2str(self.efield) + ',', file=f)
         if self.tqr is not None:
             print('  tqr=' + utils.bool2str(self.tqr) + ',', file=f)
-        if self.electron_dynamics is not None: 
-            print('  electron_dynamics=\'' + str(self.electron_dynamics)+'\'' + ',', file=f)
-        if self.electron_velocities is not None:
-            print('  electron_velocities=\'' + str(self.electron_velocities)+'\''+ ',', file=f)
-        if self.startingwfc is not None:
-            print('  startingwfc=' + str(self.startingwfc)+ ',', file=f)
-        if self.ampre is not None:
-            print('  ampre=' + utils.num2str(self.ampre)+ ',', file=f)
-        if self.orthogonalization is not None:
-            print('  orthogonalization=' + str(self.orthogonalization)+ ',', file=f)
-        if self.electron_damping is not None:
-            print('  electron_damping=' + utils.num2str(self.electron_damping)+ ',', file=f)
+
         # &IONS ###
         if self.ion_dynamics == 'ase3' or not ionssec:
             simpleconstr, otherconstr = [], []
@@ -1643,8 +1579,6 @@ class espresso(Calculator):
             print(
                 '/\n&IONS\n  ion_positions=\'' + self.ion_positions + '\',',
                 file=f)
-        elif self.ion_dynamics == 'verlet':
-            print('/\n&IONS\n  ion_dynamics=\'verlet\',', file=f)
 
         # automatically generated parameters
         if self.remove_rigid_rot is not None:
@@ -1652,8 +1586,6 @@ class espresso(Calculator):
                 '  remove_rigid_rot=' + utils.bool2str(self.remove_rigid_rot) +
                 ',',
                 file=f)
-        if self.ion_temperature is not None:
-            print('  ion_temperature=' '\''+str(self.ion_temperature)+'\'' + ',', file=f)
         if self.tempw is not None:
             print('  tempw=' + utils.num2str(self.tempw) + ',', file=f)
         if self.tolp is not None:
@@ -1689,8 +1621,7 @@ class espresso(Calculator):
             print('  w_1=' + utils.num2str(self.w_1) + ',', file=f)
         if self.w_2 is not None:
             print('  w_2=' + utils.num2str(self.w_2) + ',', file=f)
-        if self.fnosep is not None:
-            print('  fnosep=' + utils.num2str(self.fnosep) + ',', file=f)
+
         # &CELL ###
         if self.cell_dynamics is not None:
             print(
@@ -1757,7 +1688,7 @@ class espresso(Calculator):
             kp = self.kpts
         else:
             kp = overridekpts
-        if kp is 'gamma':
+        if kp == 'gamma':
             print('K_POINTS Gamma', file=f)
         else:
             x = np.shape(kp)
@@ -1827,20 +1758,23 @@ class espresso(Calculator):
         if self.atoms is None:
             self.set_atoms(atoms)
         x = atoms.cell - self.atoms.cell
-        morethanposchange = np.max(x) > 1E-13 or np.min(x) < -1E-13 or len(
-            atoms) != len(
-                self.atoms) or (atoms.get_atomic_numbers() !=
-                                self.atoms.get_atomic_numbers()).any()
+        morethanposchange = np.max(x) > 1E-13 \
+            or np.min(x) < -1E-13 \
+            or len(atoms) != len(self.atoms) \
+            or (atoms.get_atomic_numbers() 
+                != self.atoms.get_atomic_numbers()
+            ).any()
         x = atoms.positions - self.atoms.positions
-        if (np.max(x) > 1E-13 or
-            np.min(x) < -1E-13 or
-            morethanposchange or
-            (not self.started and not self.got_energy) or
-            self.recalculate):
+        if np.max(x) > 1E-13 \
+        or np.min(x) < -1E-13 \
+        or morethanposchange \
+        or (not self.started and not self.got_energy) \
+        or self.recalculate:
             self.recalculate = True
             self.results = {}
-            if self.ion_dynamics != 'ase3' or self.calculation in (
-                    'scf', 'nscf') or morethanposchange:
+            if self.ion_dynamics != 'ase3' \
+            or self.calculation in ('scf','nscf') \
+            or morethanposchange:
                 self.stop()
             self.read(atoms)
         elif self.only_init:
@@ -1885,15 +1819,17 @@ class espresso(Calculator):
                     self.atoms = atoms.copy()
                     self.cinp.write(b'G')
                     for x in p:
-                        self.cinp.write(('%.15e %.15e %.15e' % (x[0], x[1], x[2])).replace(
-                                'e', 'd').encode())
+                        self.cinp.write(
+                            ('%.15e %.15e %.15e' % (x[0], x[1], x[2])
+                            ).replace('e', 'd').encode()
+                        )
                 self.cinp.flush()
 
     def read(self, atoms):
         if self.writeversion:
             self.writeversion = False
             with open(self.log, 'a') as s:
-                s.write('  python dir          : ' + self.mypath + '\n')
+                s.write('  python dir          : ' + pkgpath + '\n')
                 if len(self.exedir) == 0:
                     stdout = Popen(
                         'which pw.x', shell=True, stdout=PIPE).stdout
@@ -1916,8 +1852,10 @@ class espresso(Calculator):
                     self.atoms = atoms.copy()
                     self.cinp.write(b'G')
                     for x in p:
-                        self.cinp.write(('%.15e %.15e %.15e' % (x[0], x[1], x[2])).replace(
-                                'e', 'd').encode())
+                        self.cinp.write(
+                            ('%.15e %.15e %.15e' % (x[0], x[1], x[2])
+                            ).replace('e', 'd').encode()
+                        )
                 self.cinp.flush()
             self.only_init = False
             s = open(self.log, 'a')
@@ -2083,7 +2021,11 @@ class espresso(Calculator):
             else:
                 self.forces = None
             self.recalculate = False
+
+            # flush the rest of cout into the log file
+            s.write(self.cout.read().decode('utf-8'))
             s.close()
+
             self.results['forces'] = self.forces
             if self.ion_dynamics != 'ase3':
                 self.stop()
@@ -2189,31 +2131,16 @@ class espresso(Calculator):
                 while len(espresso_calculators) > 0:
                     espresso_calculators.pop().stop()
                 espresso_calculators.append(self)
-            if site.batch:
+            if self.site.batch:
                 cdir = os.getcwd()
                 os.chdir(self.localtmp)
-                call(site.perHostMpiExec + ' cp ' + self.localtmp +
+                call(self.site.perHostMpiExec + ' cp ' + self.localtmp +
                      '/pw.inp ' + self.scratch, shell=True)
                 if self.use_environ:
-                    call(site.perHostMpiExec + ' cp ' + self.localtmp +
+                    call(self.site.perHostMpiExec + ' cp ' + self.localtmp +
                          '/environ.in ' + self.scratch, shell=True)
 
-<<<<<<< Updated upstream:__init__.py
                 if self.calculation != 'hund':
-                    if not self.proclist:
-                        self.cinp, self.cout = site.do_perProcMpiExec(
-                            self.scratch, self.exedir + 'pw.x ' +
-                            self.parflags + ' -in pw.inp')
-                    else:
-                        (self.cinp,
-                         self.cout,
-                         self.cerr) = site.do_perSpecProcMpiExec(
-                            self.mycpus, self.myncpus, self.scratch,
-                            self.exedir + 'pw.x ' + self.parflags +
-                            ' -in pw.inp|' + self.mypath + '/espfilter ' + str(
-                                self.natoms) + ' ' + self.log + '0')
-=======
-                if self.calculation != 'hund' and self.calculation != 'cp':
                     #if not self.proclist:
                     self.cinp, self.cout = self.site.do_perProcMpiExec(
                         self.scratch, self.exedir + 'pw.x ' +
@@ -2226,13 +2153,8 @@ class espresso(Calculator):
                     #        self.exedir + 'pw.x ' + self.parflags +
                     #        ' -in pw.inp|' + self.mypath + '/espfilter ' + str(
                     #            self.natoms) + ' ' + self.log + '0')
-                elif self.calculation == 'cp':
-                    self.cinp, self.cout = self.site.do_perProcMpiExec(
-                    self.scratch, self.exedir + 'cp.x ' +
-                    self.parflags + ' -in pw.inp')
->>>>>>> Stashed changes:ase_espresso/__init__.py
                 else:
-                    site.runonly_perProcMpiExec(
+                    self.site.runonly_perProcMpiExec(
                         self.scratch, self.exedir + 'pw.x ' + self.serflags +
                         ' -in pw.inp >>' + self.log)
                     call(
@@ -2244,50 +2166,15 @@ class espresso(Calculator):
                         utils.num2str(
                             self.totmag) + ",/ >" + self.localtmp + "/pw2.inp",
                         shell=True)
-                    call(site.perHostMpiExec + ' cp ' + self.localtmp +
+                    call(self.site.perHostMpiExec + ' cp ' + self.localtmp +
                          '/pw2.inp ' + self.scratch, shell=True)
                     if self.use_environ:
-                        call(site.perHostMpiExec + ' cp ' + self.localtmp +
+                        call(self.site.perHostMpiExec + ' cp ' + self.localtmp +
                              '/environ.in ' + self.scratch, shell=True)
-                    self.cinp, self.cout = site.do_perProcMpiExec(
+                    self.cinp, self.cout = self.site.do_perProcMpiExec(
                         self.scratch,
                         self.exedir + 'pw.x ' + self.parflags + ' -in pw2.inp')
                 os.chdir(cdir)
-            elif self.calculation == 'cp' or self.calculation == 'vc-cp' or self.calculation == 'vc-cp-wf':
-                call('cp ' + self.localtmp + '/pw.inp ' + self.scratch,
-                    shell=True)
-                if self.use_environ:
-                    call('cp ' + self.localtmp + '/environ.in ' + self.scratch,
-                        shell=True)
-                if self.calculation != 'hund':
-                    cmd = 'cd ' + self.scratch + ' ; ' + self.exedir + 'cp.x ' + self.serflags + ' -in pw.inp'
-                    print(cmd)
-                    p = Popen(cmd, shell=True, stdin=PIPE,
-                          stdout=PIPE, close_fds=True)
-                    self.cinp, self.cout = (p.stdin, p.stdout)
-                else:
-                    call(
-                        'cd ' + self.scratch + ' ; ' + self.exedir + 'cp.x ' +
-                        self.serflags + ' -in pw.inp >>' + self.log, shell=True)
-                    call(
-                        "sed s/occupations.*/occupations=\\'fixed\\',/ <" +
-                        self.localtmp +
-                        "/pw.inp | sed s/ELECTRONS/ELECTRONS\\\\n\ \ startingwfc=\\'file\\',\\\\n\ \ startingpot=\\'file\\',/ | sed s/conv_thr.*/conv_thr="
-                        + utils.num2str(self.conv_thr) +
-                        ",/ | sed s/tot_magnetization.*/tot_magnetization=" +
-                        utils.num2str(self.totmag) + ",/ >" + self.localtmp +
-                        "/pw2.inp", shell=True
-                    )
-                    call('cp ' + self.localtmp + '/pw2.inp ' + self.scratch,
-                        shell=True)
-                    if self.use_environ:
-                        call('cp ' + self.localtmp + '/environ.in ' +
-                            self.scratch)
-
-                    cmd = 'cd ' + self.scratch + ' ; ' + self.exedir + 'cp.x ' + self.serflags + ' -in pw2.inp'
-                    p = Popen(cmd, shell=True, stdin=PIPE,
-                          stdout=PIPE, close_fds=True)
-                    self.cinp, self.cout = (p.stdin, p.stdout)
             else:
                 call('cp ' + self.localtmp + '/pw.inp ' + self.scratch,
                      shell=True)
@@ -2347,9 +2234,11 @@ class espresso(Calculator):
             s.close()
             try:
                 self.cinp.close()
+            except:
+                pass
+            try:
                 self.cout.close()
-            except IOError:
-                # espresso may have already shut down, so close may fail
+            except:
                 pass
             self.started = False
 
@@ -2726,6 +2615,7 @@ class espresso(Calculator):
         oldfmax = self.fmax
         oldpress = self.press
         olddpress = self.dpress
+
         if fmax is not None:
             self.fmax = fmax
         if press is not None:
@@ -2743,6 +2633,7 @@ class espresso(Calculator):
         self.fmax = oldfmax
         self.press = oldpress
         self.dpress = olddpress
+
     def relax_atoms(
             self,
             ion_dynamics='bfgs',  # {'bfgs', 'damp'}
@@ -2770,94 +2661,6 @@ class espresso(Calculator):
         self.ion_dynamics = oldalgo
         self.fmax = oldfmax
 
-    def run_md(
-            self,
-            calculation = 'vc-md',
-            ion_dynamics='beeman',  # {'bfgs', 'damp'}
-            cell_dynamics='w',
-            nstep = 50, 
-            electron_dynamics= None,
-            electron_velocities= None,
-            ion_velocities='zero',
-            dt = 0.5,
-            emass = 400,
-            emass_cutoff = 2.5,
-            nr1b = 10,
-            nr2b = 10, 
-            nr3b = 10,
-            ion_temperature = 'rescaling',
-            fnosep = 60.0,
-            tempw = 300.0,
-            occupations = None,
-            restart_mode = 'from_scratch'):
-        """Relax atoms using Espresso's internal relaxation routines.
-        fmax is the force convergence limit
-        atoms.get_potential_energy() will yield the final energy,
-        but to obtain the structure use
-        relaxed_atoms = calc.get_final_structure()
-        If you want to continue calculations in relax_atoms, use
-        relaxed_atoms.set_calculator(some_espresso_calculator)
-        """
-        self.stop()
-        oldmode = self.calculation
-        oldalgo = self.ion_dynamics
-        oldcell_dynamics = cell_dynamics
-        oldion_velocities = self.ion_velocities
-        oldelectron_dynamics = self.electron_dynamics
-        oldelectron_velocities = self.electron_velocities
-        oldemass = self.emass
-        oldemass_cutoff = self.emass_cutoff
-        oldnr1b = self.nr1b
-        oldnr2b = self.nr2b
-        oldnr3b = self.nr3b
-        oldion_temperature = ion_temperature
-        oldfnosep = self.fnosep
-        oldtempw = self.tempw
-        oldnstep = self.nstep
-        oldrestart_mode = self.restart_mode
-        oldoccupations = self.occupations
-        self.ion_dynamics = ion_dynamics
-        self.ion_velocities = ion_velocities
-        self.cell_dynamics = cell_dynamics
-        
-        if electron_dynamics != None:
-            self.electron_dynamics = electron_dynamics
-        if electron_velocities != None:
-            self.electron_velocities = electron_velocities
-        self.emass = emass
-        self.emass_cutoff = emass_cutoff
-        self.nr1b = nr1b
-        self.nr2b = nr2b
-        self.nr3b = nr3b
-        self.fnosep = fnosep
-        self.tempw = tempw
-        self.nstep = nstep
-        self.restart_mode = restart_mode
-        self.occupations = occupations
-        self.ion_temperature = ion_temperature
-        self.calculation = calculation
-        self.recalculate = True
-        self.read(self.atoms)
-
-        self.calculation = oldmode
-        self.ion_dynamics = old_algo
-        self.cell_dynamics = oldcell_dynamics
-        self.ion_velocities = oldion_velocities
-        self.electron_dynamics = oldelectron_dynamics
-        self.electron_velocities = oldelectron_velocities
-        self.emass = oldemass
-        self.emass_cutoff = oldemass_cutoff
-        self.nr1b = oldnr1b
-        self.nr2b = oldnr2b
-        self.nr3b = oldnr3b
-        self.ion_temperature = oldion_temperature
-        self.ion_velocities = oldion_velocities
-        self.fnosep = oldfnosep    
-        self.tempw = oldtempw
-        self.nstep = oldnstep
-        self.restart_mode = oldrestart_mode
-        self.occupations = oldoccupations
-
     def run_espressox(self,
                       binary,
                       inp,
@@ -2871,21 +2674,21 @@ class espresso(Calculator):
         if log is not None:
             ll += ' >> {}/{}'.format(self.localtmp, log)
 
-        if site.batch and parallel:
+        if self.site.batch and parallel:
             cdir = os.getcwd()
             os.chdir(self.localtmp)
-            call(site.perHostMpiExec + ' cp ' + self.localtmp + '/' +
+            call(self.site.perHostMpiExec + ' cp ' + self.localtmp + '/' +
                  inp + ' ' + self.scratch, shell=True)
             if self.use_environ:
-                call(site.perHostMpiExec + ' cp ' + self.localtmp +
+                call(self.site.perHostMpiExec + ' cp ' + self.localtmp +
                      '/environ.in' + ' ' + self.scratch, shell=True)
 
             if piperead:
-                p = site.do_perProcMpiExec_outputonly(
+                p = self.site.do_perProcMpiExec_outputonly(
                     self.scratch,
                     binary + ' ' + self.parflags + ' -in ' + inp + ll)
             else:
-                site.runonly_perProcMpiExec(
+                self.site.runonly_perProcMpiExec(
                     self.scratch,
                     binary + ' ' + self.parflags + ' -in ' + inp + ll)
             os.chdir(cdir)
@@ -2896,10 +2699,8 @@ class espresso(Calculator):
 
             call('cp {}/{} {}'.format(self.localtmp, inp, self.scratch),
                  shell=True)
-            if not hasattr(site, 'singleProc'):
-                site.singleProc = ''
-            cmd = 'cd {} ; {} {} {} -in {}'.format(
-                self.scratch, site.singleProc, binary, self.serflags, inp + ll)
+            cmd = 'cd {} ; {} {} -in {}'.format(
+                self.scratch, binary, self.serflags, inp + ll)
             if piperead:
                 p = Popen(cmd, shell=True, stdout=PIPE).stdout
             else:
@@ -3391,50 +3192,6 @@ class espresso(Calculator):
             plot=[['fileout', self.topath(xsf)]],
             parallel=False,
             log='charge.log')
-
-    def cube_charge_density(self, cube, spin='both'):
-        """
-        Writes the charge density from a DFT calculation
-        to an input file for xcrysden.
-        """
-        if spin == 'both' or spin == 0:
-            s = 0
-        elif spin == 'up' or spin == 1:
-            s = 1
-        elif spin == 'down' or spin == 2:
-            s = 2
-        else:
-            raise ValueError('unknown spin component')
-
-        self.run_ppx(
-            'charge.inp',
-            inputpp=[['plot_num', 0], ['spin_component', s]],
-            plot=[['fileout', self.topath(cube)]],
-            output_format=6,
-            parallel=False,
-            log='charge_cube.log')
-
-    def cube_ae_charge_density(self, cube, spin='both'):
-        """
-        Writes the charge density from a DFT calculation
-        to an input file for xcrysden.
-        """
-        if spin == 'both' or spin == 0:
-            s = 0
-        elif spin == 'up' or spin == 1:
-            s = 1
-        elif spin == 'down' or spin == 2:
-            s = 2
-        else:
-            raise ValueError('unknown spin component')
-
-        self.run_ppx(
-            'charge.inp',
-            inputpp=[['plot_num', 21], ['spin_component', s]],
-            plot=[['fileout', self.topath(cube)]],
-            output_format=6,
-            parallel=False,
-            log='charge_ae_cube.log')
 
     def extract_total_potential(self, spin='both'):
         """
@@ -4038,11 +3795,11 @@ class espresso(Calculator):
         self.run_ppx(
             'wf_pp.in',
             log='wf_pp.log',
-            inputpp=[('plot_num', 11), ('filplot', self.topath(pot_filename))],
+            inputpp=[('plot_num', 11), ('filplot', self.topath('pot.xsf'))],
             output_format=3,
             iflag=3,
             piperead=False,
-            parallel=True)
+            parallel=False)
 
         f = open(self.localtmp + '/avg.in', 'w')
         print('1', file=f)
@@ -4054,12 +3811,8 @@ class espresso(Calculator):
         print('', file=f)
         f.close()
         call('cp ' + self.localtmp + '/avg.in ' + self.scratch, shell=True)
-        # average.x requires to be run with a single process.
-        # If used with mpi, need to define singleProc in espsite.py
-        if not hasattr(site, 'singleProc'):
-            site.singleProc = ''
-        call('cd {}; {} {}average.x < avg.in >> {}/avg.out'.format(self.scratch, site.singleProc,
-                                                                   self.exedir, self.localtmp), shell=True)
+        call('cd ' + self.scratch + ' ; ' + 'average.x < avg.in >>' +
+             self.localtmp + '/avg.out', shell=True)
         call('cp ' + self.scratch + '/avg.dat ' + self.localtmp, shell=True)
 
         # Pick a good place to sample vacuum level
@@ -4149,7 +3902,7 @@ class espresso(Calculator):
         self.convergence = convsave
 
     def get_world(self):
-        return world(site.nprocs)
+        return world(self.site.nprocs)
 
     def get_number_of_scf_steps(self, all=False):
         """Get number of steps for convered scf. Returns an array.

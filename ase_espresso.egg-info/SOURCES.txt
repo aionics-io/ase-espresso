@@ -1,0 +1,16 @@
+COPYING
+README.md
+setup.py
+ase_espresso/__init__.py
+ase_espresso/atomic_configs.py
+ase_espresso/espsite.py
+ase_espresso/multiespresso.py
+ase_espresso/pwlog2trajectory.py
+ase_espresso/subdirs.py
+ase_espresso/utils.py
+ase_espresso/vibespresso.py
+ase_espresso/worldstub.py
+ase_espresso.egg-info/PKG-INFO
+ase_espresso.egg-info/SOURCES.txt
+ase_espresso.egg-info/dependency_links.txt
+ase_espresso.egg-info/top_level.txt
