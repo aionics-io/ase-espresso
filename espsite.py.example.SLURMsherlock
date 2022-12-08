@@ -39,6 +39,7 @@ class config:
             self.perHostMpiExec = 'mpiexec -machinefile '+uniqnodefile+' -np '+nnodes
             self.perProcMpiExec = 'mpiexec -machinefile '+nodefile+' -np '+str(nprocs)+' -wdir %s %s'
             self.perSpecProcMpiExec = 'mpiexec -machinefile %s -np %d -wdir %s %s'
+            self.singleProc = 'mpiexec -np 1'
 
 
     def do_perProcMpiExec(self, workdir, program):
