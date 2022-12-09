@@ -3,7 +3,7 @@
 import os
 from subprocess import Popen, PIPE
 
-class config:
+class Config:
     def __init__(self):
         self.scratch = '/home/'+os.getenv('USER')
         if not os.path.exists(self.scratch):
