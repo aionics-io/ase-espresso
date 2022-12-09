@@ -4,7 +4,7 @@
 import os
 
 
-class config:
+class Config:
     def __init__(self):
         self.scratch = '.'
         self.submitdir = '.'
