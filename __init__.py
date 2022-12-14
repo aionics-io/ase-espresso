@@ -1102,11 +1102,12 @@ class espresso(Calculator):
         if self.ion_dynamics != 'ase3' or not self.cancalc:
             # We basically ignore convergence of total energy differences
             # between ionic steps and only consider fmax as in ase
-            print('  etot_conv_thr=1d0,', file=f)
-            print(
-                '  forc_conv_thr=' + utils.num2str(self.fmax /
-                                                   (Rydberg / Bohr)) + ',',
-                file=f)
+            if self.calculation != 'cp':
+                print('  etot_conv_thr=1d0,', file=f)
+                print(
+                    '  forc_conv_thr=' + utils.num2str(self.fmax /
+                                                    (Rydberg / Bohr)) + ',',
+                    file=f)
 
         # turn on fifo communication if espsite.py is set up that way
         if hasattr(self.site, 'fifo'):
@@ -1611,7 +1612,7 @@ class espresso(Calculator):
         if self.ampre is not None:
             print('  ampre=' + utils.num2str(self.ampre)+ ',', file=f)
         if self.orthogonalization is not None:
-            print('  orthogonalization=' + str(self.orthogonalization)+ ',', file=f)
+            print('  orthogonalization=\'' + str(self.orthogonalization)+ '\'' + ',', file=f)
         if self.electron_damping is not None:
             print('  electron_damping=' + utils.num2str(self.electron_damping)+ ',', file=f)
         # &IONS ###
@@ -2787,7 +2788,8 @@ class espresso(Calculator):
             isave = None,
             iprint = None,
             restart_mode = 'from_scratch',
-            outdir = 'None'):
+            outdir = None,
+            orthogonalization = 'ortho'):
         """Relax atoms using Espresso's internal relaxation routines.
         fmax is the force convergence limit
         atoms.get_potential_energy() will yield the final energy,
@@ -2817,6 +2819,7 @@ class espresso(Calculator):
         oldiprint = self.iprint
         oldoccupations = self.occupations
         oldoutdir = self.outdir
+        oldorthogonalization = self.orthogonalization
         self.ion_dynamics = ion_dynamics
         self.ion_velocities = ion_velocities
         self.cell_dynamics = cell_dynamics
@@ -2835,6 +2838,7 @@ class espresso(Calculator):
         self.nstep = nstep
         self.restart_mode = restart_mode
         self.outdir = outdir
+        self.orthogonalization = orthogonalization
         self.isave = isave
         self.iprint = iprint
         self.occupations = occupations
@@ -2844,7 +2848,7 @@ class espresso(Calculator):
         self.read(self.atoms)
 
         self.calculation = oldmode
-        self.ion_dynamics = old_algo
+        self.ion_dynamics = oldalgo
         self.cell_dynamics = oldcell_dynamics
         self.ion_velocities = oldion_velocities
         self.electron_dynamics = oldelectron_dynamics
@@ -2864,6 +2868,7 @@ class espresso(Calculator):
         self.iprint = oldiprint
         self.occupations = oldoccupations
         self.outdir = oldoutdir
+        self.orthogonalization = oldorthogonalization
     def run_espressox(self,
                       binary,
                       inp,
