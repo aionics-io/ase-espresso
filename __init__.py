@@ -861,12 +861,12 @@ class espresso(Calculator):
         masses = self.atoms.get_masses()
         magmoms = list(self.atoms.get_initial_magnetic_moments())
         if len(magmoms) < len(symbols):
-            magmoms += list(np.zeros(len(symbols) - len(magmoms), np.float))
+            magmoms += list(np.zeros(len(symbols) - len(magmoms), dtype=float))
         pos = self.atoms.get_scaled_positions()
 
         if self.U is not None:
             if type(self.U) == dict:
-                Ulist = np.zeros(len(symbols), np.float)
+                Ulist = np.zeros(len(symbols), dtype=float)
                 for i, s in enumerate(symbols):
                     if s in self.U:
                         Ulist[i] = self.U[s]
@@ -874,13 +874,13 @@ class espresso(Calculator):
                 Ulist = list(self.U)
                 if len(Ulist) < len(symbols):
                     Ulist += list(
-                        np.zeros(len(symbols) - len(Ulist), np.float))
+                        np.zeros(len(symbols) - len(Ulist), dtype=float))
         else:
-            Ulist = np.zeros(len(symbols), np.float)
+            Ulist = np.zeros(len(symbols), dtype=float)
 
         if self.J is not None:
             if type(self.J) == dict:
-                Jlist = np.zeros(len(symbols), np.float)
+                Jlist = np.zeros(len(symbols), dtype=float)
                 for i, s in enumerate(symbols):
                     if s in self.J:
                         Jlist[i] = self.J[s]
@@ -888,13 +888,13 @@ class espresso(Calculator):
                 Jlist = list(self.J)
                 if len(Jlist) < len(symbols):
                     Jlist += list(
-                        np.zeros(len(symbols) - len(Jlist), np.float))
+                        np.zeros(len(symbols) - len(Jlist), dtype=float))
         else:
-            Jlist = np.zeros(len(symbols), np.float)
+            Jlist = np.zeros(len(symbols), dtype=float)
 
         if self.U_alpha is not None:
             if type(self.U_alpha) == dict:
-                U_alphalist = np.zeros(len(symbols), np.float)
+                U_alphalist = np.zeros(len(symbols), dtype=float)
                 for i, s in enumerate(symbols):
                     if s in self.U_alpha:
                         U_alphalist[i] = self.U_alpha[s]
@@ -902,9 +902,9 @@ class espresso(Calculator):
                 U_alphalist = list(self.U_alpha)
                 if len(U_alphalist) < len(symbols):
                     U_alphalist += list(
-                        np.zeros(len(symbols) - len(U_alphalist), np.float))
+                        np.zeros(len(symbols) - len(U_alphalist), dtype=float))
         else:
-            U_alphalist = np.zeros(len(symbols), np.float)
+            U_alphalist = np.zeros(len(symbols), dtype=float)
 
         self.species = []
         self.specprops = []
@@ -954,7 +954,7 @@ class espresso(Calculator):
                     nel[el] = int(round(float(y)))
                     break
             p.close()
-        nvalence = np.zeros(len(self.specprops), np.int)
+        nvalence = np.zeros(len(self.specprops), dtype=int)
         for i, x in enumerate(self.specprops):
             nvalence[i] = nel[self.specdict[x[0]].s]
         return nvalence, nel
@@ -2054,7 +2054,7 @@ class espresso(Calculator):
                         a = self.cout.readline().decode('utf-8')
                         s.write(a)
                         s.flush()
-                    self.forces = np.empty((self.natoms, 3), np.float)
+                    self.forces = np.empty((self.natoms, 3), dtype=float)
                     for i in range(self.natoms):
                         self.cout.readline().decode('utf-8')
                     for i in range(self.natoms):
@@ -2072,7 +2072,7 @@ class espresso(Calculator):
                             s.flush()
                         a = self.cout.readline().decode('utf-8')
                         s.write(a)
-                        self.forces = np.empty((self.natoms, 3), np.float)
+                        self.forces = np.empty((self.natoms, 3), dtype=float)
                         for i in range(self.natoms):
                             a = self.cout.readline().decode('utf-8')
                             while a.find('force') < 0:
@@ -2140,7 +2140,7 @@ class espresso(Calculator):
                     while a[:11] != '     Forces':
                         a = f.readline()
                     f.readline()
-                    self.forces = np.empty((self.natoms, 3), np.float)
+                    self.forces = np.empty((self.natoms, 3), dtype=float)
                     for i in range(self.natoms):
                         a = f.readline()
                         while a.find('force') < 0:
@@ -2604,7 +2604,7 @@ class espresso(Calculator):
                 'calcstress or running a unit cell relaxation.'
             )
 
-        stress = np.empty((3, 3), np.float)
+        stress = np.empty((3, 3), dtype=float)
         for i in range(3):
             stress[i][:] = [float(x) for x in s[i].split()[:3]]
 
@@ -3105,8 +3105,10 @@ class espresso(Calculator):
                 # ncomponents = 2*j+1 +1  (latter for m summed up)
                 ncomponents = int(2. * float(channel[jpos + 2:])) + 2
             if channel not in self.pdos[iatom]:
-                self.pdos[iatom][channel] = np.zeros((ncomponents, npoints),
-                                                     np.float)
+                self.pdos[iatom][channel] = np.zeros(
+                    (ncomponents, npoints),
+                    dtype=float
+                )
                 first = True
             else:
                 first = False
@@ -3242,7 +3244,7 @@ class espresso(Calculator):
                 a = f.readline().decode('utf-8')
             if a == '':
                 break
-            pr = np.empty(nbnd, np.complex)
+            pr = np.empty(nbnd, dtype=complex)
             for i in range(nbnd):
                 b = f.readline().decode('utf-8').split(',')
                 pr[i] = float(b[0]) + 1j * float(b[1])
