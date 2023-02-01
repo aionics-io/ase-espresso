@@ -56,11 +56,11 @@ def convert_constraints(atoms):
         for c in atoms.constraints:
             if isinstance(c, constraints.FixAtoms):
                 if len(forcefilter) == 0:
-                    forcefilter = np.ones((n, 3), np.int)
+                    forcefilter = np.ones((n, 3), dtype=int)
                 forcefilter[c.index] = [0, 0, 0]
             elif isinstance(c, constraints.FixCartesian):
                 if len(forcefilter) == 0:
-                    forcefilter = np.ones((n, 3), np.int)
+                    forcefilter = np.ones((n, 3), dtype=int)
                 forcefilter[c.a] = c.mask
             elif isinstance(c, constraints.FixBondLengths):
                 for d in c.constraints:
