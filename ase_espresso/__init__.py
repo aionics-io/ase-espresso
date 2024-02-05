@@ -921,7 +921,7 @@ class espresso(Calculator):
             el = self.specdict[x].s
             # get number of valence electrons from pseudopotential or paw setup
             p = Popen(
-                'egrep -i \'z\ valence|z_valence\' ' + self.psppath +
+                'egrep -i \'z valence|z_valence\' ' + self.psppath +
                 '/' + el + '.UPF | tr \'"\' \' \'',
                 shell=True, stdout=PIPE).stdout
             out = p.readline().decode('utf-8')
@@ -2160,7 +2160,7 @@ class espresso(Calculator):
                     call(
                         "sed s/occupations.*/occupations=\\'fixed\\',/ <" +
                         self.localtmp +
-                        "/pw.inp | sed s/ELECTRONS/ELECTRONS\\\\n\ \ startingwfc=\\'file\\',\\\\n\ \ startingpot=\\'file\\',/ | sed s/conv_thr.*/conv_thr="
+                        "/pw.inp | sed s/ELECTRONS/ELECTRONS\\\\n  startingwfc=\\'file\\',\\\\n  startingpot=\\'file\\',/ | sed s/conv_thr.*/conv_thr="
                         + utils.num2str(self.conv_thr) +
                         ",/ | sed s/tot_magnetization.*/tot_magnetization=" +
                         utils.num2str(
@@ -2193,7 +2193,7 @@ class espresso(Calculator):
                     call(
                         "sed s/occupations.*/occupations=\\'fixed\\',/ <" +
                         self.localtmp +
-                        "/pw.inp | sed s/ELECTRONS/ELECTRONS\\\\n\ \ startingwfc=\\'file\\',\\\\n\ \ startingpot=\\'file\\',/ | sed s/conv_thr.*/conv_thr="
+                        "/pw.inp | sed s/ELECTRONS/ELECTRONS\\\\n  startingwfc=\\'file\\',\\\\n  startingpot=\\'file\\',/ | sed s/conv_thr.*/conv_thr="
                         + utils.num2str(self.conv_thr) +
                         ",/ | sed s/tot_magnetization.*/tot_magnetization=" +
                         utils.num2str(self.totmag) + ",/ >" + self.localtmp +
